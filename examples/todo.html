@@ -1,0 +1,73 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Test page</title>
+<script type="text/javascript" src="../javascript/mootools.1-4-5.js"></script>
+<script type="text/javascript" src="../javascript/vmvc/vmvc.js"></script>
+<script type="text/javascript">
+window.addEvent('domready', function() {
+	var c = new Controller(['todos']);
+	var todos = c.get('todos');
+	
+	var undoTodo = function(){
+		$$('.done').addEvent('click', function(e){
+			e.stop();
+			var itemId = this.get('id').split('-')[1].toInt() - 1;
+			todos.set('items.'+itemId+'.done', false);
+			completeTodo();
+		});
+	};	
+	
+	var completeTodo = function(){
+		$$('.undone').addEvent('click', function(e){
+			e.stop();
+			var itemId = this.get('id').split('-')[1].toInt() - 1;
+			todos.set('items.'+itemId+'.done', true);
+			undoTodo();
+		});
+	};
+	
+	$('todoForm').addEvent('submit', function(e){
+		e.stop();
+		todos.set('items.push', {item: $('addTodo').get('value'), done: false});
+		$('addTodo').set('value', '');
+		completeTodo();
+	});
+});
+</script>
+<style>
+.done {
+	color: green;
+	text-decoration: line-through;
+}
+</style>
+</head>
+<body>
+<form id="todoForm">
+<input type="text" id="addTodo" name="addTodo"/>
+<input type="submit"/>
+</form>
+<div id="todosTarget"></div>
+<script id="todosModel" type="application/json">
+{items: []}
+</script>
+<script id="todosView" type="text/template">
+{{if items}}
+	<ol>
+	{{list items}}
+		<li>
+			{{if done}}
+				<span id="item-{{index items}}" class="done">{{item}}</span>
+			{{else !done}}
+				<span id="item-{{index items}}" class="undone">{{item}}</span>
+			{{/if done}}
+		</li>
+	{{/list}}
+	</ol>
+{{else !items}}
+	<p>There are no todo items. Try adding one with the form above.</p>
+{{/if items}}
+</script>
+</body>
+</html>

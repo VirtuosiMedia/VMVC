@@ -7,6 +7,7 @@
 <script type="text/javascript" src="../javascript/vmvc/vmvc.js"></script>
 <script type="text/javascript">
 window.addEvent('domready', function() {
+/*
 	var m = new Model('Todos', {name: 'Ben', todos: ['One','Two'], people: [
 		{first: 'Jill', last: 'Doe'},
 		{first: 'Jane', last: 'Doe'},
@@ -26,18 +27,35 @@ window.addEvent('domready', function() {
 	})
 	v.populate(m);
 	console.log(v.render());
+*/
+});
+</script>
+<script type="text/javascript">
+window.addEvent('domready', function() {
+	var c = new Controller(['todos']);
+	var todos = c.get('todos');
+	todos.set('people.push', {first:'Johanna', last: 'Doe'});
+	todos.set('name', 'Benjamin');
+	todos.remove('people.1');
 });
 </script>
 </head>
 <body>
-<div id="target"></div>
-<script id="template" type="text/template">
+<div id="todosTarget"></div>
+<script id="todosModel" type="application/json">
+{name: 'Ben', todos: ['One','Two'], people: [
+	{first: 'Jill', last: 'Doe'},
+	{first: 'Jane', last: 'Doe'},
+	{first: 'Jade', last: 'Doe'}
+]}
+</script>
+<script id="todosView" type="text/template">
 {{# This is a comment. }}
 {{if !name}}
-<p>There is no name to call you.</p>
-{{else}}
-<p>Hello, {{name}}! How are you, {{name}}?</p>
-{{/if}}
+	<p>There is no name to call you.</p>
+{{else name}}
+	<p>Hello, {{name}}! How are you, {{name}}?</p>
+{{/if name}}
 <p>Here are your todos:</p>
 
 {{if todos}}
@@ -46,9 +64,9 @@ window.addEvent('domready', function() {
 		<li>{{index todos}}: {{this}}</li>
 	{{/list}}
 	</ul>
-{{else}}
+{{else !todos}}
 	<p>There are no todos, {{name}}, sorry.</p>
-{{/if}}
+{{/if todos}}
 
 {{if people}}
 <ul>
@@ -67,7 +85,7 @@ window.addEvent('domready', function() {
 {{random people}}
 	<p>A random person is: {{first}} {{last}}.</p>
 {{/random}}
-{{/if}}
+{{/if people}}
 
 {{# potential features}}
 

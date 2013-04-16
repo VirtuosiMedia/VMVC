@@ -13,20 +13,37 @@ var Controller = new Class({
 	options: {
 		asynch: false, //Choose whether or not templates and models are loaded asynchronously
 		preload: [], //The names of templates and models to preload, can use 'all' as a value 
-		defaultNames: [], //The names of templates and models to load on instantiation, can use 'all' as a value
+		defaultNames: 'all', //An array of names of templates and models to load on instantiation, can use 'all' as a value
 		errorName: null, //The template/model name to use for errors
-		routing: false,
+		routing: false, //Whether or not routing is enabled; use false for a single page web app with no hash URLs
 		routingNames: {}, //Something like {route1: [name1, name2]}, else defaults to 1 to 1 names routing
-		modelsUrl: null, //something like path/to/url/api.php?model={{name}} or path/to/url/{{name}}.html else ${{name}}ModelSource
-		viewsUrl: null, //ditto, but with ${{name}}ViewSource and ${{name}}Target
+		modelsUrl: null, //something like path/to/url/api.php?model={{name}} or path/to/url/{{name}}.html else {{name}}Model
+		viewsUrl: null, //ditto, but with {{name}}View and {{name}}Target
 	},
 	
 	/**
 	 * @param obj - options - The options
 	 */
 	initialize: function(names, options){
-		console.log('loaded');
-		this.currentHash = window.location.hash;
+		this.names = names;
+		this.setOptions(options);
+		
+		this._factory(names);
+		
+		if (this.options.routing){
+			this.currentHash = window.location.hash;
+		} else {
+			Object.each(this.views, function(view, name){
+				this._load(name, this.models[name]);
+			}, this);
+		}
+		
+		names.each(function(name){
+			window.addEvent(name + 'Change', function(model){
+				this.models[name] = model;
+				this._load(name, this.models[name]);
+			}.bind(this));
+		}.bind(this));	
 	},
 	
 	//Model name, view name must be the same
@@ -42,22 +59,51 @@ var Controller = new Class({
 	//View to be used by multiple names...
 
 	//Creates all views and models
-	_factory: function(){},
+	_factory: function(names){
+		var loaded = (this.options.defaultNames == 'all') ? names : this.options.defaultNames;
+		loaded = (this.options.preload == 'all') ? loaded.combine(names) : loaded.combine(this.options.preload);
+		
+		this.models = {};
+		this.views = {};
+		
+		loaded.each(function(name){
+			var model = new Model(name, JSON.decode($(name+'Model').get('html')));
+			var view = new View(name);
+			this.models[name] = model;
+			this.views[name] = view.load().populate(model);
+		}, this);		
+		
+	},
 	
 	//Loads the appropriate models and views
-	_load: function(names){},
+	_load: function(name){
+		if ($(name+'Target')){
+			$(name+'Target').set('html', this.views[name].populate(this.models[name]).render());
+		}
+	},
 	
-	//Loads the appropriate template from the passed in hash if it exists, else loads the error template
+	//Loads the appropriate template from the passed in hash if it exists, else loads the error template -> Consider using the default template here too
 	_loadFromHash: function(hash){},
 	
 	//Poll the hashtag once every 100 ms if routing is enabled !!!! use the hashchange event, but be careful about case in IE
 	_pollHash: function(){}, 
 	
-	//Retrieves the model for manipulation
-	get: function(name){}, 
+	/**
+	 * @param string name - The name of the model to retrieve
+	 * @return The named model for manipulation
+	 */
+	get: function(name){
+		return (Object.keys(this.models).contains(name)) ? this.models[name] : false;
+	}, 
 	
-	//Replaces the stored model with a new one, name can be gotten automatically (names[0])
+	//Replaces the stored model with a new one, name can be gotten automatically (names[0]) -> This could be called automatically on the model change event
 	set: function(model){},
+	
+	//Creates a new model/view pair, with the option to reuse a view template
+	add: function(name, modelData, viewPrototypeName){},
+	
+	//Clones both view and model prototypes and assigns a new name
+	clone: function(name, prototypeName, modelData){},
 	
 	//Save the model name to the modelsUrl via POST or 'all' for all models
 	save: function(name){}, 
@@ -86,13 +132,13 @@ var Model = new Class({
 				this.names.push(name);	
 			}, this);
 		}
-		window.fireEvent('model-change-' + this.name);
+		window.fireEvent(this.names[0] + 'Change', this);
 		return this;
 	},
 	
 	remove: function(key){
 		this._parseKey(key, null, true);
-		window.fireEvent('model-change-' + this.name);
+		window.fireEvent(this.names[0] + 'Change', this);
 		return this;
 	},
 		
@@ -111,10 +157,14 @@ var Model = new Class({
 		}, this);
 		return JSON.encode(copy);
 	},
+
+	setFilter: function(filter){
+		this.filter = filter;
+	},
 	
 	_parseKey: function(key, value, remove){
 		var data = this.data;
-		
+
 		if (key){
 			var children = key.split('.');
 			var numChildren = children.length - 1;
@@ -123,8 +173,8 @@ var Model = new Class({
 				for (var i = 0; i < numChildren; i++){
 					data = data[children[i]];
 				}
-				
-				if (value){
+
+				if (typeOf(value) !== 'undefined'){
 					//The push syntax allows for a value to be pushed on to the end of an array
 					var index = (children[numChildren] == 'push') ? data.length : children[numChildren];
 					data[index] = value;
@@ -137,7 +187,8 @@ var Model = new Class({
 				if (remove){delete data[key];}				
 			}
 		} else {
-			if (remove){data = {};}
+			if (value){this.data = data = value;}
+			if (remove){this.data = data = {};}
 		}		
 		return data;
 	},
@@ -145,17 +196,21 @@ var Model = new Class({
 	//Arrays are automatically pruned of undefined or null values and their indices are reset 
 	//This is done to prevent issues for sorting and counts, so do not use the array index as a permanent unique identifier
 	_cleanArrays: function(data){
-		data = (data) ? data : this.data;
+		data = (typeOf(data) !== 'null') ? data : this.data;
 		if ((toString.call(data) === '[object Array]')||(typeOf(data) === 'object')){
 			if (toString.call(data) === '[object Array]'){
 				data = data.clean();
-				
+
 				data.each(function(value, key){
 					data[key] = this._cleanArrays(value) 
 				}, this);
 			} else {
 				Object.each(data, function(value, key){
-					data[key] = this._cleanArrays(value) 
+					if ((toString.call(value) === '[object Array]')||(typeOf(value) === 'object')){
+						data[key] = this._cleanArrays(value)
+					} else {
+						data[key] = value;
+					}			
 				}, this);				
 			}
 		}
@@ -175,26 +230,30 @@ var View = new Class({
 		this.name = name;
 	},
 	
-	load: function(){
-		if (!this.template){
-			if (this.source.substr(0, 1) === '#'){
-				this.template = $$(this.source)[0].get('html').toString();
-			} else {
-				//load via AJAX -- We may want this to be synchronous, but maybe not
+	load: function(template){
+		if (template){
+			this.template = template;
+		} else {
+			if (!this.template){
+				if ($(this.name+'View')){
+					this.template = $(this.name+'View').get('html').toString();
+				} else {
+					//load via AJAX -- We may want this to be synchronous, but maybe not
+				}
 			}
 		}
 		return this;
 	},
 	
 	populate: function(model){
-		this.template = this._removeComments(this.template);
-		
+		this.populatedTemplate = this._removeComments(this.template);
+
 		if (toString.call(model) === '[object Array]'){
-			this.populatedTemplate = this._parseArray(this.template, 'this', model);
+			this.populatedTemplate = this._parseArray(this.populatedTemplate, 'this', model);
 		} else if (typeOf(model) === 'object'){
-			this.populatedTemplate = this._parseObject(this.template, 'this', model);
+			this.populatedTemplate = this._parseObject(this.populatedTemplate, 'this', model);
 		} else {
-			this.populatedTemplate = this._parsePlaceholder(this.template, 'this', model);
+			this.populatedTemplate = this._parsePlaceholder(this.populatedTemplate, 'this', model);
 		}
 		return this;
 	},
@@ -232,7 +291,7 @@ var View = new Class({
 	//Private
 	_parseObject: function(template, key, value){
 		if (Object.keyOf(window, value.constructor) == 'Model'){
-			value = value.get();
+			value = Object.clone(value.get());
 		}
 
 		template = this._runTagFunctions(template, key, value, this.objectFunctions);
@@ -259,7 +318,7 @@ var View = new Class({
 	
 	//Private
 	_evaluateIf: function(template, key, value){
-		if (template.contains('{{if ')){		
+		if ((template.contains('{{if '))&&(key)){		
 			if (toString.call(value) === '[object Array]'){
 				var valid = (value.length > 0);
 			} else if (typeOf(value) === 'object'){	
@@ -267,31 +326,29 @@ var View = new Class({
 			} else {
 				var valid = ((value !== null)&&(value !== false)&&(value !== ''));
 			}
-			
-			if (template.contains('{{if'+key+'}}')){ //Normal if statement
-				var regex = new RegExp('{{if'+key+'}}((.|\n)*?){{/if}}');
+
+			if (template.contains('{{if '+key.trim()+'}}')){ //Normal if statement
+				var regex = new RegExp('{{if '+key.trim()+'}}((.|\n)*?){{/if '+key.trim()+'}}');
 				var ifTemplate = (template.match(regex)) ? template.match(regex)[1].trim() : template;
-				
-				if (ifTemplate.contains('{{else}}')){
-					ifTemplate = (valid) ? ifTemplate.split('{{else}}')[0] : ifTemplate.split('{{else}}')[1];
+
+				if (ifTemplate.contains('{{else !'+key.trim()+'}}')){
+					ifTemplate = (valid) ? ifTemplate.split('{{else !'+key.trim()+'}}')[0] : ifTemplate.split('{{else !'+key.trim()+'}}')[1];
 				} else {
 					ifTemplate = (valid) ? ifTemplate : '';
 				}
-				
 				template = template.replace(regex, ifTemplate);
 			} else if (template.contains('{{if !'+key.trim()+'}}')){ //The if negation statement
 				var regex = new RegExp('{{if !'+key.trim()+'}}((.|\n)*?){{/if}}');
 				var ifTemplate = (template.match(regex)) ? template.match(regex)[1].trim() : template;
 				
-				if (ifTemplate.contains('{{else}}')){
-					ifTemplate = (!valid) ? ifTemplate.split('{{else}}')[0] : ifTemplate.split('{{else}}')[1];
+				if (ifTemplate.contains('{{else'+key+'}}')){
+					ifTemplate = (!valid) ? ifTemplate.split('{{else'+key+'}}')[0] : ifTemplate.split('{{else'+key+'}}')[1];
 				} else {
 					ifTemplate = (!valid) ? ifTemplate : '';
 				}
 				template = template.replace(regex, ifTemplate);
 			} 	
-		} 
-		
+		} 	
 		return template;
 	},
 
@@ -331,8 +388,8 @@ var View = new Class({
 		this.customTags[name] = fn.bind(this);
 	},
 	
-	render: function(){
-		return this.populatedTemplate;
+	render: function(raw){
+		return (raw) ? this.template : this.populatedTemplate;
 	},	
 	
 	//Tag functions

@@ -8,32 +8,6 @@
 <script type="text/javascript">
 window.addEvent('domready', function() {
 	var c = new Controller(['todos']);
-	var todos = c.get('todos');
-	
-	var undoTodo = function(){
-		$$('.done').addEvent('click', function(e){
-			e.stop();
-			var itemId = this.get('id').split('-')[1].toInt() - 1;
-			todos.set('items.'+itemId+'.done', false);
-			completeTodo();
-		});
-	};	
-	
-	var completeTodo = function(){
-		$$('.undone').addEvent('click', function(e){
-			e.stop();
-			var itemId = this.get('id').split('-')[1].toInt() - 1;
-			todos.set('items.'+itemId+'.done', true);
-			undoTodo();
-		});
-	};
-	
-	$('todoForm').addEvent('submit', function(e){
-		e.stop();
-		todos.set('items.push', {item: $('addTodo').get('value'), done: false});
-		$('addTodo').set('value', '');
-		completeTodo();
-	});
 });
 </script>
 <style>
@@ -45,26 +19,34 @@ window.addEvent('domready', function() {
 </head>
 <body>
 <form id="todoForm">
-<input type="text" id="addTodo" name="addTodo"/>
-<input type="submit"/>
+	<input type="text" name="item" />
+	<input type="hidden" name="done" value="false" />
+	<input type="submit"/>
 </form>
 <div id="todosTarget"></div>
 <script id="todosModel" type="application/json">
-{items: []}
+{items: [
+	{item: 'Have fun Johanna', done: false}
+]}
 </script>
 <script id="todosView" type="text/template">
 {{if items}}
-	<ol>
+	<ol {{add items from todoForm}}>
 	{{list items}}
 		<li>
 			{{if done}}
-				<span id="item-{{index items}}" class="done">{{item}}</span>
+				<input type="checkbox" checked {{set items.index.done to false on click}} />
+				<span class="done">{{item}}</span>				
+				<a href="#" {{remove items.index on click}}>Remove</a>
 			{{else !done}}
-				<span id="item-{{index items}}" class="undone">{{item}}</span>
+				<input type="checkbox" {{set items.index.done to true on click}} />
+				<span class="undone">{{item}}</span>
+				<a href="#" {{remove items.index on click}}>Remove</a>
 			{{/if done}}
 		</li>
 	{{/list}}
 	</ol>
+	<a href="#" {{save todos on click}}>Save</a>
 {{else !items}}
 	<p>There are no todo items. Try adding one with the form above.</p>
 {{/if items}}

@@ -42,8 +42,11 @@ var Controller = new Class({
 			window.addEvent(name + 'Change', function(model){
 				this.models[name] = model;
 				this._load(name, this.models[name]);
+				this._assignEvents();
 			}.bind(this));
-		}.bind(this));	
+		}.bind(this));
+		
+		this._assignEvents();
 	},
 	
 	//Model name, view name must be the same
@@ -87,6 +90,76 @@ var Controller = new Class({
 	
 	//Poll the hashtag once every 100 ms if routing is enabled !!!! use the hashchange event, but be careful about case in IE
 	_pollHash: function(){}, 
+
+	_assignEvents: function(){
+		var triggers = $$('[data-action]');
+		triggers.each(function(el){
+			var action = '_bind' + el.get('data-action').capitalize() + 'Event';
+			var model = el.get('data-model');
+			this[action](el, model);
+		}, this);
+	},
+	
+	_bindAddEvent: function(el, model){
+		var source = $(el.get('data-source'));
+		if (source){
+			var self = this;
+			var path = el.get('data-path')+'.push';
+			source.removeEvents('submit').addEvent('submit', function(e){
+				e.stop();
+				
+				//Serialize the form
+				var data = {};
+				var values = this.toQueryString().split('&');
+				values.each(function(pair){
+					pair = pair.split('=');
+					var key = pair[0];
+					var value = self._convertValue(pair[1]);
+					data[key] = value;
+				});
+				
+				self.models[model].set(path, data);
+				this.reset();
+				this.focus();
+			});
+		}
+	},
+	
+	_bindSetEvent: function(el, model){
+		el.addEvent(el.get('data-event'), function(e){
+			e.stop();
+			var path = el.get('data-path');
+			var value = this._convertValue(el.get('data-value'));
+			this.models[model].set(path, value);
+		}.bind(this));		
+	},
+	
+	_bindRemoveEvent: function(el, model){
+		el.addEvent(el.get('data-event'), function(e){
+			e.stop();
+			var path = el.get('data-path');
+			this.models[model].remove(path);
+		}.bind(this));		
+	},
+	
+	_bindSaveEvent: function(el, model){
+		
+	},	
+
+	/**
+	 * Converts a string to its native type
+	 * @param string value - The value to be converted
+	 * @return mixed value - The converted value
+	 */
+	_convertValue: function(value){
+		value = decodeURIComponent(value.replace(/\+/g, ' ')).trim();
+		if (value === 'true') {return true;}
+		if (value === 'false') {return false;}
+		if (value === 'null') {return null;}
+		if ((!isNaN(parseFloat(value))) && (isFinite(value))){return value.toFloat();}
+		if (value.contains('{')||value.contains('[')){return (JSON.decode(value, true)) ? JSON.decode(value) : value;}
+		return value;
+	},
 	
 	/**
 	 * @param string name - The name of the model to retrieve
@@ -222,8 +295,9 @@ var View = new Class({
 	
 	customTags: {},
 	placeholderFunctions: ['_evaluateIf'],
-	arrayFunctions: ['_evaluateIf', '_count', '_first', '_last', '_random'],
-	objectFunctions: ['_evaluateIf'],
+	arrayFunctions: ['_evaluateIf', '_count', '_first', '_last', '_random', '_add', '_remove', '_set'],
+	arrayItemFunctions: ['_remove', '_set'],
+	objectFunctions: ['_evaluateIf', '_remove', '_set'],
 	
 	initialize: function(name){
 		if (typeOf(name) !== 'string') throw new Error('Model name parameter must be a string');
@@ -246,7 +320,7 @@ var View = new Class({
 	},
 	
 	populate: function(model){
-		this.populatedTemplate = this._removeComments(this.template);
+		this.populatedTemplate = this._save(this._removeComments(this.template));
 
 		if (toString.call(model) === '[object Array]'){
 			this.populatedTemplate = this._parseArray(this.populatedTemplate, 'this', model);
@@ -274,12 +348,13 @@ var View = new Class({
 			var listTemplate = template.match(regex)[1].trim();
 			var list = [];
 			value.each(function(item, index){
+				listItemTemplate = this._runTagFunctions(listTemplate, key, value, this.arrayItemFunctions, index);
 				if (toString.call(item) === '[object Array]'){
-					list.push(this._parseArray(listTemplate, key, item));
+					list.push(this._parseArray(listItemTemplate, key, item));
 				} else if (typeOf(item) === 'object'){
-					list.push(this._parseObject(listTemplate, null, item));
+					list.push(this._parseObject(listItemTemplate, null, item));
 				} else {
-					list.push(this._parsePlaceholder(listTemplate, 'this', item));
+					list.push(this._parsePlaceholder(listItemTemplate, 'this', item));
 				}
 				list[index] = this._parsePlaceholder(list[index], 'index'+key, index + 1);
 			}, this);
@@ -309,9 +384,9 @@ var View = new Class({
 		return template;
 	},
 
-	_runTagFunctions: function(template, key, value, functions){
+	_runTagFunctions: function(template, key, value, functions, index){
 		functions.each(function(funk){
-			template = (typeOf(this[funk]) === 'function') ? this[funk](template, key, value) : this.customTags[funk](template, key, value);
+			template = (typeOf(this[funk]) === 'function') ? this[funk](template, key, value, index) : this.customTags[funk](template, key, value, index);
 		}, this);
 		return template;
 	},
@@ -393,21 +468,136 @@ var View = new Class({
 	},	
 	
 	//Tag functions
-	
+
+	/**
+	 * Replaces the {{count path}} tag with the number of items in the 'path' array. Only to be used for arrays.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The current key.
+	 * @param mixed value - The value of the current key.
+	 */	
 	_count: function(template, key, value){
 		return this._evaluateSingleTag(template, key, value.clean().length, 'count');
 	},
-	
+
+	/**
+	 * Replaces the {{first path}} tag with the value of the first item in the 'path' array. Only to be used for arrays.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The current key.
+	 * @param mixed value - The value of the current key.
+	 */	
 	_first: function(template, key, value){
 		return this._evaluateMatchedTag(template, key, value[0], 'first');
 	},
 
+	/**
+	 * Replaces the {{last path}} tag with the value of the last item in the 'path' array. Only to be used for arrays.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The current key.
+	 * @param mixed value - The value of the current key.
+	 */		
 	_last: function(template, key, value){
 		return this._evaluateMatchedTag(template, key, value[value.length - 1], 'last');
 	},
-	
+
+	/**
+	 * Replaces the {{random path}} tag with the value of a random item in the 'path' array. Only to be used for arrays.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The current key.
+	 * @param mixed value - The value of the current key.
+	 */		
 	_random: function(template, key, value){
 		var random = Number.random(0, value.length - 1);
 		return this._evaluateMatchedTag(template, key, value[random], 'random');
+	},
+	
+	//Event tags
+	
+	/**
+	 * Adds data attributes to signal that a form submission event should add to a model's index. The format is
+	 * {{add path from formId}}. It is best placed on an ol or ul list element.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The key to be found. May be entered as a full model path.
+	 */
+	_add: function(template, key){
+		var regex = new RegExp('{{add ((.)*?'+key.trim()+') from ((.)*?)}}');
+		var path = (template.match(regex)) ? template.match(regex)[1] : false;
+		if (path){
+			var sourceId = (template.match(regex)) ? template.match(regex)[3] : false;
+			var attributes = 'data-action="add" data-path="'+path.trim()+'" data-source="'+sourceId+'" data-model="'+this.name+'"';
+			template = this._evaluateSingleTag(template, ' '+path+' from '+sourceId, attributes, 'add');
+		}
+		return template;
+	},
+
+	/**
+	 * Adds data attributes to signal that an item should be removed from the model on a specified event. The format is
+	 * {{remove path on event}}. For array items, substitute the word 'index' for the array index number and it will be 
+	 * automatically replaced with the proper index.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The key to be found. May be entered as a full model path.
+	 * @param mixed value - The value is not used in this function and can be ignored
+	 * @param int index - [optional] The array index if the current item is an array
+	 */
+	_remove: function(template, key, value, index){
+		if (key){
+			var regex = new RegExp('{{remove ((.)*?'+key.trim()+'(.)*?) on ((.)*?)}}');
+			var path = (template.match(regex)) ? template.match(regex)[1] : false;
+			if (path){
+				if (((path.contains('index')) && (typeOf(index) !== 'null'))||(!path.contains('index'))){
+					var indexPath = path.replace('index', index);
+					var event = (template.match(regex)) ? template.match(regex)[4] : false;
+					var attributes = 'data-action="remove" data-path="'+indexPath.trim()+'" data-event="'+event+'" data-model="'+this.name+'"';
+					template = this._evaluateSingleTag(template, ' '+path.trim()+' on '+event, attributes, 'remove');
+				}
+			}
+		}
+		return template;
+	},
+
+	/**
+	 * Adds data attributes to signal that an item's value should be set in the model on a specified event. The format 
+	 * is {{set path to value on event}}. For array items, substitute the word 'index' for the array index number and 
+	 * it will be automatically replaced with the proper index.
+	 * @param string template - The template to be evaluated.
+	 * @param string key - The key to be found. May be entered as a full model path.
+	 * @param mixed value - The value is not used in this function and can be ignored
+	 * @param int index - [optional] The array index if the current item is an array
+	 */	
+	_set: function(template, key, value, index){
+		if (key){
+			var regex = new RegExp('{{set ((.)*?'+key.trim()+'(.)*?) to ((.)*?) on ((.)*?)}}');
+			var path = (template.match(regex)) ? template.match(regex)[1] : false;
+			if (path){
+				if (((path.contains('index')) && (typeOf(index) !== 'null'))||(!path.contains('index'))){
+					var indexPath = path.replace('index', index);
+					var newValue = (template.match(regex)) ? template.match(regex)[4] : false;
+					var event = (template.match(regex)) ? template.match(regex)[6] : false;
+					var attributes = 'data-action="set" data-path="'+indexPath.trim()+'" data-value="'+newValue+'" data-event="'+event+'" data-model="'+this.name+'"';					
+					template = this._evaluateSingleTag(template, ' '+path.trim()+' to '+newValue+' on '+event, attributes, 'set');
+
+					//Rerun it if there are multiple values to be set
+					template = (template.match(regex)) ? this._set(template, key, value, index) : template; 
+				}
+			}			
+		}
+		return template;
+	},
+
+	/**
+	 * Adds data attributes to signal that the current model should be saved on the given event. The format is 
+	 * {{save modelName on event}}.
+	 * @param string template - The template to be evaluated.
+	 */		
+	_save: function(template){
+		var regex = new RegExp('{{save ((.)*?) on ((.)*?)}}');
+		var values = template.match(regex);
+		if (values){
+			var attributes = 'data-action="save" data-model="'+values[1]+'" data-event="'+values[3]+'"';
+			template = this._evaluateSingleTag(template, ' '+values[1]+' on '+values[3], attributes, 'save');
+			
+			//Rerun it if there are multiple values to be set
+			template = (template.match(regex)) ? this._save(template) : template;			
+		}
+		return template;
 	}
 });

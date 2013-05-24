@@ -7,7 +7,10 @@
 <script type="text/javascript" src="../javascript/vmvc/vmvc.js"></script>
 <script type="text/javascript">
 window.addEvent('domready', function() {
-	var c = new Controller(['todos']);
+	var c = new Controller(
+		{todos: ['todos', 'completed']}, 
+		{viewsUrl: 'views/{{name}}.html', modelsUrl: 'models/{{name}}.js'}
+	);
 });
 </script>
 <style>
@@ -23,12 +26,15 @@ window.addEvent('domready', function() {
 	<input type="hidden" name="done" value="false" />
 	<input type="submit"/>
 </form>
-<div id="todosTarget"></div>
+<div class="todosTarget"></div>
+<div class="completedTarget"></div>
+<!-- -/->
 <script id="todosModel" type="application/json">
 {items: [
-	{item: 'Have fun Johanna', done: false}
+	{item: 'Have fun', done: false}
 ]}
 </script>
+<!-- -/->
 <script id="todosView" type="text/template">
 {{if items}}
 	<ol {{add items from todoForm}}>
@@ -51,5 +57,6 @@ window.addEvent('domready', function() {
 	<p>There are no todo items. Try adding one with the form above.</p>
 {{/if items}}
 </script>
+<!-- -->
 </body>
 </html>

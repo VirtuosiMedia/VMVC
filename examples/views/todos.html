@@ -1,0 +1,21 @@
+{{if items}}
+	<h2>All Items</h2>
+	<ol {{add items from todoForm}}>
+	{{list items}}
+		<li>
+			{{if done}}
+				<input type="checkbox" checked {{set items.index.done to false on click}} />
+				<span class="done">{{item}}</span>				
+				<a href="#" {{remove items.index on click}}>Remove</a>
+			{{else !done}}
+				<input type="checkbox" {{set items.index.done to true on click}} />
+				<span class="undone">{{item}}</span>
+				<a href="#" {{remove items.index on click}}>Remove</a>
+			{{/if done}}
+		</li>
+	{{/list}}
+	</ol>
+	<a href="#" {{save todos on click}}>Save</a>
+{{else !items}}
+	<p>There are no todo items. Try adding one with the form above.</p>
+{{/if items}}

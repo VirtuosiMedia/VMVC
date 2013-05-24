@@ -11,7 +11,7 @@ var Controller = new Class({
 	Implements: [Events, Options],
 
 	options: {
-		asynch: false, //Choose whether or not templates and models are loaded asynchronously
+		async: false, //Choose whether or not templates and models are loaded asynchronously
 		preload: [], //The names of templates and models to preload, can use 'all' as a value 
 		defaultNames: 'all', //An array of names of templates and models to load on instantiation, can use 'all' as a value
 		errorName: null, //The template/model name to use for errors
@@ -22,13 +22,15 @@ var Controller = new Class({
 	},
 	
 	/**
+	 * @param obj - names - A JSON object of key/value pairs, with the model names as keys, and an array of one or more 
+	 * 		view names as values. Ex: {model: [view1, view2]}
 	 * @param obj - options - The options
 	 */
 	initialize: function(names, options){
 		this.names = names;
 		this.setOptions(options);
 		
-		this._factory(names);
+		this._factory();
 		
 		if (this.options.routing){
 			this.currentHash = window.location.hash;
@@ -62,26 +64,31 @@ var Controller = new Class({
 	//View to be used by multiple names...
 
 	//Creates all views and models
-	_factory: function(names){
-		var loaded = (this.options.defaultNames == 'all') ? names : this.options.defaultNames;
-		loaded = (this.options.preload == 'all') ? loaded.combine(names) : loaded.combine(this.options.preload);
+	_factory: function(){
+		var loaded = {};		
+		loaded = (this.options.defaultNames == 'all') ? this.names : this.options.defaultNames;
+		loaded = (this.options.preload == 'all') ? Object.merge(loaded, this.names) : Object.merge(loaded, this.options.preload); 
 		
 		this.models = {};
 		this.views = {};
 		
-		loaded.each(function(name){
-			var model = new Model(name, JSON.decode($(name+'Model').get('html')));
-			var view = new View(name);
+		Object.each(loaded, function(viewNames, modelName){
+			console.log(typeof(viewNames))
+			var modelNames = viewNames.combine([modelName]);
+			var model = new Model(modelNames, null, null, this.options);
 			this.models[name] = model;
-			this.views[name] = view.load().populate(model);
-		}, this);		
-		
+			
+			viewNames.each(function(name){
+				var view = new View(name, {async: this.options.async, viewsUrl: this.options.viewsUrl});
+				this.views[name] = view.load().populate(model);
+			}, this);
+		}, this);			
 	},
 	
 	//Loads the appropriate models and views
 	_load: function(name){
-		if ($(name+'Target')){
-			$(name+'Target').set('html', this.views[name].populate(this.models[name]).render());
+		if ($$('.'+name+'Target').length > 0){
+			$$('.'+name+'Target').set('html', this.views[name].populate(this.models[name]).render());
 		}
 	},
 	
@@ -179,18 +186,29 @@ var Controller = new Class({
 	clone: function(name, prototypeName, modelData){},
 	
 	//Save the model name to the modelsUrl via POST or 'all' for all models
-	save: function(name){}, 
+	save: function(name){},
+	
+	//Maps model view pairs 
+	map: function(pairs){}
 });
 
 var Model = new Class({
 	
-	initialize: function(name, defaultData, filter){
-		if (typeOf(name) !== 'string') throw new Error('Model name parameter must be a string');
+	Implements: [Events, Options],
+	
+	options: {
+		async: false,
+		modelsUrl: null
+	},
+	
+	initialize: function(name, defaultData, filter, options){
 		if ((defaultData) && (typeOf(defaultData) !== 'object')) throw new Error('Model defaultData parameter must be an object');
 		if ((filter) && (typeOf(filter) !== 'function')) throw new Error('Model filter parameter must be a function');
 		
-		this.names = [name];
-		this.data = defaultData;
+		this.setOptions(options);
+		
+		this.names = (toString.call(name) === '[object Array]') ? name : [name];
+		this._load(name, defaultData);
 		this.filter = (filter) ? filter : function(value){return value;};
 	},
 	
@@ -205,13 +223,21 @@ var Model = new Class({
 				this.names.push(name);	
 			}, this);
 		}
-		window.fireEvent(this.names[0] + 'Change', this);
+		
+		this.names.each(function(name){
+			window.fireEvent(name + 'Change', this);	
+		}, this);
+		
 		return this;
 	},
 	
 	remove: function(key){
 		this._parseKey(key, null, true);
-		window.fireEvent(this.names[0] + 'Change', this);
+		
+		this.names.each(function(name){
+			window.fireEvent(name + 'Change', this);	
+		}, this);
+		
 		return this;
 	},
 		
@@ -233,6 +259,37 @@ var Model = new Class({
 
 	setFilter: function(filter){
 		this.filter = filter;
+	},
+
+	_load: function(name, data){
+		if (data){
+			this.data = data;
+		} else {
+			if ($(name+'Model')){
+				this.data = JSON.decode($(name+'Model').get('html')); 
+			} else {
+				this._loadAjaxModel(name);
+			}
+		}
+	},
+	
+	_loadAjaxModel: function(name){
+		if (this.options.modelsUrl){
+			var self = this;
+			var url = this.options.modelsUrl.replace('{{name}}', name);	
+			var viewRequest = new Request({
+				async: self.options.async,
+				url: url,
+				onSuccess: function(json){
+					self.data = JSON.decode(json);			
+				},
+				onFailure: function(){
+					throw new Error("The model '" + name + "' could not be loaded.")
+				}
+			}).send();
+		} else {
+			throw new Error('No model URL is specified in the options');
+		}			
 	},
 	
 	_parseKey: function(key, value, remove){
@@ -292,16 +349,23 @@ var Model = new Class({
 });
 
 var View = new Class({
+
+	Implements: [Events, Options],
 	
 	customTags: {},
 	placeholderFunctions: ['_evaluateIf'],
 	arrayFunctions: ['_evaluateIf', '_count', '_first', '_last', '_random', '_add', '_remove', '_set'],
 	arrayItemFunctions: ['_remove', '_set'],
 	objectFunctions: ['_evaluateIf', '_remove', '_set'],
+	options: {
+		async: false,
+		viewsUrl: null
+	},
 	
-	initialize: function(name){
-		if (typeOf(name) !== 'string') throw new Error('Model name parameter must be a string');
+	initialize: function(name, options){
+		if (typeOf(name) !== 'string') throw new Error('View name parameter must be a string');
 		this.name = name;
+		this.setOptions(options);
 	},
 	
 	load: function(template){
@@ -310,13 +374,32 @@ var View = new Class({
 		} else {
 			if (!this.template){
 				if ($(this.name+'View')){
-					this.template = $(this.name+'View').get('html').toString();
+					this.template = $(this.name+'View').get('html').toString().trim();
 				} else {
-					//load via AJAX -- We may want this to be synchronous, but maybe not
+					this._loadAjaxView();
 				}
 			}
 		}
 		return this;
+	},
+	
+	_loadAjaxView: function(){
+		if (this.options.viewsUrl){
+			var self = this;
+			var url = this.options.viewsUrl.replace('{{name}}', this.name);
+			var viewRequest = new Request({
+				async: self.options.async,
+				url: url,
+				onSuccess: function(template, xml){
+					self.template = template.clean();			
+				},
+				onFailure: function(){
+					throw new Error("The view template '" + self.name + "' could not be loaded.")
+				}
+			}).send();	
+		} else {
+			throw new Error('No view URL is specified in the options');
+		}
 	},
 	
 	populate: function(model){
@@ -393,7 +476,7 @@ var View = new Class({
 	
 	//Private
 	_evaluateIf: function(template, key, value){
-		if ((template.contains('{{if '))&&(key)){		
+		if ((template.contains('{{if '))&&(key)){
 			if (toString.call(value) === '[object Array]'){
 				var valid = (value.length > 0);
 			} else if (typeOf(value) === 'object'){	
@@ -403,9 +486,9 @@ var View = new Class({
 			}
 
 			if (template.contains('{{if '+key.trim()+'}}')){ //Normal if statement
-				var regex = new RegExp('{{if '+key.trim()+'}}((.|\n)*?){{/if '+key.trim()+'}}');
+				var regex = new RegExp('{{if '+key.trim()+'}}((.|\\n)*?){{/if '+key.trim()+'}}');
 				var ifTemplate = (template.match(regex)) ? template.match(regex)[1].trim() : template;
-
+				
 				if (ifTemplate.contains('{{else !'+key.trim()+'}}')){
 					ifTemplate = (valid) ? ifTemplate.split('{{else !'+key.trim()+'}}')[0] : ifTemplate.split('{{else !'+key.trim()+'}}')[1];
 				} else {
@@ -422,7 +505,7 @@ var View = new Class({
 					ifTemplate = (!valid) ? ifTemplate : '';
 				}
 				template = template.replace(regex, ifTemplate);
-			} 	
+			} 
 		} 	
 		return template;
 	},
